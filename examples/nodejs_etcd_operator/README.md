@@ -12,11 +12,11 @@
   size: 5
   version: "3.2.13"
  ```
-3. Deploy application which uses Etcd client lib using openshift 4 devconsole.
+3. Deploy application which uses Etcd client lib using OpenShift 4 devconsole.
 Test application : https://github.com/akashshinde/node-todo.git
 ![](https://i.imgur.com/WGQZ1nj.png)
 
-Note: This example assumes the app is deployed using a K8s Deployment if using a OCP DeploymentConfig change the group and resource in the applicationSelector to
+Note: This example assumes the app is deployed using a K8s Deployment. If using an OCP DeploymentConfig change the group and resource in the applicationSelector to
 
 ```
     group: apps.openshift.io
@@ -24,7 +24,7 @@ Note: This example assumes the app is deployed using a K8s Deployment if using a
     resource: deploymentconfigs
 ```
 
-4. Add the labels to the deployment or deployment config
+4. Add the labels to the deployment or deployment config (Optional)
 
 ```
 oc label deployment node-todo-git 'connects-to=etcd' 'environment=demo'
@@ -38,14 +38,10 @@ metadata:
   name: node-binding-request
 spec:
   applicationSelector:
-    labelSelector:
-      matchLabels:
-        connects-to: etcd
-        environment: demo
     group: apps
     resource: deployments
     version: v1
-    resourceRef: ""
+    resourceRef: node-todo-git
   backingServiceSelector:
     group: etcd.database.coreos.com
     version: v1beta2
