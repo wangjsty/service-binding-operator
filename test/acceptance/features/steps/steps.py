@@ -510,3 +510,5 @@ def create_deployment(context, app_name, image_ref):
     app = App(app_name, context.namespace.name, image_ref)
     if not app.is_running():
         assert app.install() is True, "Failed to create deployment."
+
+

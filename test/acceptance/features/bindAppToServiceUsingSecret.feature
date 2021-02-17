@@ -7,6 +7,7 @@ Feature: Bind values from a secret referred in backing service resource
         Given Namespace [TEST_NAMESPACE] is used
         * Service Binding Operator is running
 
+    @disabled
     Scenario: Inject into app a key from a secret referred within service resource
         Binding definition is declared on service CRD.
         Given OLM Operator "backend" is running
@@ -18,7 +19,7 @@ Feature: Bind values from a secret referred in backing service resource
             metadata:
                 name: backends.stable.example.com
                 annotations:
-                    service.binding/username: path={.status.data.dbCredentials},objectType=Secret,valueKey=username
+                    service.binding/username: path={.status.data.dbCredentials},objectType=Secret,sourceKey=username
             spec:
                 group: stable.example.com
                 versions:
@@ -75,6 +76,7 @@ Feature: Bind values from a secret referred in backing service resource
                     resource: deployments
             """
         Then Service Binding "ssa-1" is ready
+        And Secret "ssa-1" does not have key "BACKEND"
         And The application env var "BACKEND_USERNAME" has value "AzureDiamond"
 
     Scenario: Inject into app all keys from a secret referred within service resource
