@@ -1,37 +1,94 @@
-# Application Workload Author's Guide
+# Service Binding User Guide
+
+[Introduction to Service Binding](#Introduction-to-Service-Binding)
+[How it works](#How-it-works)
+[ServiceBindingSpec options](#ServiceBindingSpec)
+[How to expose Binding Information](#How-to-expose-Binding-Information)
+[How Binding Information can be exposed](#How-Binding-Information-can-be-exposed)
+[Data model - Building blocks for expressing binding information]()
+
+**Advanced Topics**
+[Auto Detect Binding Resources](#Auto-Detect-Binding-Resources)
+[Custom Naming Strategy](#Custom-Naming-Strategy)
+[Compose custom binding variables](#Compose-custom-binding-variables)
+[Custom Containers Path and Secret Path](#Custom-Containers-Path-and-Secret-Path)
+[Binding non-podSpec-based application workloads](#Binding-non-podSpec-based-application-workloads)
 
 
+### Introduction to Service Binding 
 
-- [Introduction to Service Binding](#Introduction-to-Service-binding)
+![](https://i.imgur.com/vsCeTfs.png)
+The goal of the Service Binding Operator is to enable application authors to import an application and run it on Kubernetes with services such as databases represented as Kubernetes objects including Operator-backed and chart-based backing services
 
-- [Backing Service providing binding metadata](#Backing-service-providing-binding-metadata)
+To make a service bindable, the service provider needs to express the information needed by applications to bind with the services. In other words, the service provider must express the information that's “interesting” to applications.
 
-- [Backing Service not providing binding metadata](#Backing-service-not-providing-binding-metadata)
-  * [Annotate Service Resources](#Annotate-service-resources)
-  * [Detect Binding Resources](#Detect-binding-resources)
-  * [Compose custom binding variables](#Compose-custom-binding-variables)
+There are multiple methods for making backing services bindable, including the backing service provider providing metadata as annotations on the resources.
 
-- [Configuring custom naming strategy for binding names](#Custom-Naming-Strategy)
-- [Accessing the binding data from the application](#Accessing-the-binding-data-from-the-application)
-- [Binding non podSpec based application workloads](#Binding-non-podSpec-based-application-workloads)
 
-- [Custom Containers Path and Secret Path](#Custom-Containers-Path-and-Secret-Path)
-  * [Containers Path](#Containers-Path)
-  * [Secret Path](#Secret-Path)
+### How it works
+Create `ServiceBinding` custom resource.
 
-- [Binding Metadata in Annotations](#Binding-Metadata-in-Annotations)
-  * [Requirements for specifying binding information in a backing service CRD / Kubernetes resource](#Requirements-for-specifying-binding-information-in-a-backing-service-CRD-/-Kubernetes-resource)
-  * [Data model : Building blocks for expressing binding information](#Data-model-:-Building-blocks-for-expressing-binding-information)
-  * [A Sample CR : The Kubernetes resource that the application would bind to](#A-Sample-CR-:-The-Kubernetes-resource-that-the-application-would-bind-to)
-  * [Scenarios](#Scenarios)
+```yaml=
+apiVersion: binding.operators.coreos.com/v1alpha1
+kind: ServiceBinding
+metadata:
+  name: binding-request
+  namespace: service-binding-demo
+spec:
+  application:
+    name: java-app
+    group: apps
+    version: v1
+    resource: deployments
+  services:
+  - group: charts.helm.k8s.io
+    version: v1alpha1
+    kind: Cockroachdb
+    name: db-demo
+    id: db_1
 
-<!-- toc -->
+```
+The generated binding secret would look like this:
+```yaml=
+kind: Secret
+apiVersion: v1
+metadata:
+  name: example-servicebindingrequest
+  namespace: pgo
+data:
+  COCKROACHDB_CLUSTERIP: MTcyLjMwLjEwMS4zNA==
+  COCKROACHDB_CONF_PORT: MjYyNTc=
+type: Opaque
+```
 
-# Introduction to Service Binding
+This would generate a binding secret and inject it into the workload as an environment variable or a file based on bindAsFile flag in the ServiceBinding resource.
 
-A Service Binding involves connecting an application to one or more backing services using a binding secret generated for the purpose of storing information to be consumed by the application.
+Here's how the environment variables look like:
 
-``` yaml
+```
+$ env | grep COCKROACHDB
+
+COCKROACHDB_CLUSTERIP=172.10.2.3
+COCKROACHDB_CONF_PORT=8090
+```
+
+Here's how the mount paths look like:
+
+```
+bindings
+├── <Service-binding-name>
+│   ├── COCKROACHDB_CLUSTERIP
+│   ├── COCKROACHDB_CONF_PORT
+
+```
+
+Instead of /bindings, you can specify a custom binding root path by specifying the same in spec.mountPath
+
+
+#### How to bind application using Service Binding Operator.
+Example of `ServiceBinding` resource which defines services need to bind to the application.
+
+```yaml=
 apiVersion: binding.operators.coreos.com/v1alpha1
 kind: ServiceBinding
 metadata:
@@ -67,517 +124,82 @@ spec:
     name: auth-service
 ```
 
-The application workload expects binding metadata to be present on the Kubernetes Resources representing the backing service.
+In the above example we specify application
 
-As shown above, you may also directly use a `ConfigMap` or a `Secret` itself as a service resource that would be used as a source of binding information.
-
-# Backing Service providing binding metadata
-
-If the backing service author has provided binding metadata in the corresponding CRD,
-then Service Binding acknowledges it and automatically creates a binding secret with
-the information relevant for binding.
-
-The backing service may provide binding information as
-* Metadata in the CRD as annotations
-* Metadata in the OLM bunde manifest file as Descriptors
-* Secret or ConfigMap
-
-If the backing service provides binding metadata, you may use the resource as is
-to express an intent to bind your workload with one or more service resources, by creating a `ServiceBinding`.
-
-# Backing Service not providing binding metadata
-
-If the backing service hasn't provided any binding metadata, the application author may annotate the Kubernetes resource representing the backing service such that the managed binding secret generated has the necessary binding information.
-
-As an application author, you have a couple of options to extract binding information
-from the backing service:
-
-* Decorate the backing service resource using annotations.
-* Define custom binding variables.
-
-In the following section, details of the above methods to make
-a backing service consumable for your application workload, is explained.
-
-## Annotate Service Resources
----
-
-The application author may consider specific elements of the backing service resource interesting for binding
-
-* A specific attribute in the `spec` section of the Kubernetes resource.
-* A specific attribute in the `status` section of the Kubernetes resource.
-* A specific attribute in the `data` section of the Kubernetes resource.
-* A specific attribute in a `Secret` referenced in the Kubernetes resource.
-* A specific attribute in a `ConfigMap` referenced in the Kubernetes resource.
-
-As an example, if the Cockroachdb authors do not provide any binding metadata in the CRD, you, as an application author may annotate the CR/kubernetes resource that manages the backing service ( cockroach DB ).
-
-The backing service could be represented as any one of the following:
-* Custom Resources.
-* Kubernetes Resources, such as `Ingress`, `ConfigMap` and `Secret`.
-* OpenShift Resources, such as `Routes`.
-
-## Compose custom binding variables
----
-
-If the backing service doesn't expose binding metadata or the values exposed are not easily consumable, then an application author may compose custom binding variables using attributes in the Kubernetes resource representing the backing service.
-
-
-## Custom binding variables
----
-
-
-The *custom binding variables* feature enables application authors to request customized binding secrets using a combination of Go and jsonpath templating.
-
-Example, the backing service CR may expose the host, port and database user in separate variables, but the application may need to consume this information as a connection string.
-
-
-
-
-``` yaml
-apiVersion: binding.operators.coreos.com/v1alpha1
-kind: ServiceBinding
-metadata:
-  name: multi-service-binding
-  namespace: service-binding-demo
-spec:
-
+```yaml=
   application:
     name: java-app
     group: apps
     version: v1
     resource: deployments
-
- services:
-  - group: postgresql.baiju.dev
-    version: v1alpha1
-    kind: Database
-    name: db-demo   <--- Database service
-    id: postgresDB <--- Optional "id" field
-  - group: ibmcloud.ibm.com
-    version: v1alpha1
-    kind: Binding
-    name: mytranslator-binding <--- Translation service
-    id: translationService
-
-  mappings:
-    ## From the database service
-    - name: JDBC_URL
-      value: 'jdbc:postgresql://{{ .postgresDB.status.dbConnectionIP }}:{{ .postgresDB.status.dbConnectionPort }}/{{ .postgresDB.status.dbName }}'
-    - name: DB_USER
-      value: '{{ .postgresDB.status.dbCredentials.user }}'
-
-    ## From the translator service
-    - name: LANGUAGE_TRANSLATOR_URL
-      value: '{{ index translationService.status.secretName "url" }}'
-    - name: LANGUAGE_TRANSLATOR_IAM_APIKEY
-      value: '{{ index translationService.status.secretName "apikey" }}'
-
-    ## From both the services!
-    - name: EXAMPLE_VARIABLE
-      value: '{{ .postgresDB.status.dbName }}{{ translationService.status.secretName}}'
-
-    ## Generate JSON.
-    - name: DB_JSON
-      value: {{ json .postgresDB.status }}
-
 ```
 
-This has been adopted in [IBM CodeEngine](https://cloud.ibm.com/docs/codeengine?topic=codeengine-kn-service-binding).
+Need binding information from defined services.
 
+```yaml=
+  services:
+  - group: database.example.com
+    version: v1alpha1
+    kind: DBInstance
+    name: db
 
-*In future releases, the above would be supported as volume mounts too.*
+  - group: database.example.com
+    version: v1alpha1
+    kind: DBCredentials
+    name: db
 
-## Detect Binding Resources
----
+  - group: "route.openshift.io"
+    version: v1
+    kind: Route
+    name: auth-service
+```
+
+A Service Binding involves connecting an application to one or more backing services using a binding secret generated for the purpose of storing information to be consumed by the application.
+
+As shown above, you may also directly use a ConfigMap or a Secret itself as a service resource that would be used as a source of binding information.
+
+### ServiceBindingSpec
+
+```yaml=
+application: []GroupVersionResource
+```
+
+```yaml=
+services: []Services
+```
+Multiple services can be defined as a array of GVKs
+
+```yaml=
+namingStrategy: [This is go template used to build custom binding names]
+```
+[Learn more](#Custom-Naming-Strategy) about `namingStrategy`.
+
+```yaml=
+detectBindingResources: bool
+```
 
 The Service Binding Operator binds all information 'dependent' to the backing service CR by populating the binding secret with information from Routes, Services, ConfigMaps, and Secrets owned by the backing service CR if you express an intent to extract the same in case the backing service isn't annotated with the binding metadata.
 
 [This](https://kubernetes.io/docs/concepts/workloads/controllers/garbage-collection/#owners-and-dependents) is how owner and dependent relationships are set in Kubernetes.
 
-The binding is initiated by the setting this `detectBindingResources: true` in the `ServiceBinding` CR's `spec`.
-
-``` yaml
-apiVersion: binding.operators.coreos.com/v1alpha1
-kind: ServiceBinding
-metadata:
-  name: etcdbinding
-  namespace: service-binding-demo
-spec:
-  detectBindingResources: true
-  application:
-    name: java-app
-    group: apps
-    version: v1
-    resource: deployments
-  services:
-  - group: etcd.database.coreos.com
-    version: v1beta2
-    kind: EtcdCluster
-    name: etcd-cluster-example
+```yaml=
+bindAsFiles: bool
 
 ```
 
-When this API option is set to true, the Service Binding Operator automatically detects Routes, Services, ConfigMaps, and Secrets owned by the backing service CR and generates a binding secret out of it.
+### How to expose Binding Information
 
+Following example explains what can be Binding Information.
+1. **Postgresql operator** creates secret and configmap resources to store the exposable information. That can be database url, port, credentials to connect to database.
+2. **Backend services** which can be defined as `Service` or any other kubernetes resources. Binding information here can be service route url and also port information.
 
+Service Binding needs to know the information/fields which needs to be binded to the application.
 
-## Accessing the binding data from the application
----
+### Binding Metadata in Annotation
 
-The binding secret generated for the `ServiceBinding` may be associated with the workload as environment variables or volume mounts ("files").
+During a binding operation, annotations from relevant Kubernetes resources are extracted to gather information about what is interesting for binding. This information is eventually used to bind the application with the backing service by populating the binding Secret.
 
-
-``` yaml
-apiVersion: binding.operators.coreos.com/v1alpha1
-kind: ServiceBinding
-metadata:
-  name: binding-request
-  namespace: service-binding-demo
-spec:
-  application:
-    name: java-app
-    group: apps
-    version: v1
-    resource: deployments
-  services:
-  - group: charts.helm.k8s.io
-    version: v1alpha1
-    kind: Cockroachdb
-    name: db-demo
-    id: db_1
-```
-
-The generated binding secret would look like this:
-
-``` yaml
-kind: Secret
-apiVersion: v1
-metadata:
-  name: example-servicebindingrequest
-  namespace: pgo
-data:
-  COCKROACHDB_CLUSTERIP: MTcyLjMwLjEwMS4zNA==
-  COCKROACHDB_CONF_PORT: MjYyNTc=
-type: Opaque
-```
-
-This would generate a binding secret and inject it into the workload as an environment variable or a file based on `bindAsFile` flag in the `ServiceBinding` resource.
-
-
-Here's how the environment variables look like:
-
-```
-$ env | grep COCKROACHDB
-
-COCKROACHDB_CLUSTERIP=172.10.2.3
-COCKROACHDB_CONF_PORT=8090
-
-```
-
-Here's how the mount paths look like:
-
-```
-bindings
-├── <Service-binding-name>
-│   ├── COCKROACHDB_CLUSTERIP
-│   ├── COCKROACHDB_CONF_PORT
-```
-
-Instead of `/bindings`, you can specify a custom binding root path by specifying the same in `spec.mountPath`, example,
-
-``` yaml
-apiVersion: binding.operators.coreos.com/v1alpha1
-kind: ServiceBinding
-metadata:
-  name: binding-request
-  namespace: service-binding-demo
-spec:
-  bindAsFiles: true
-  application:
-    name: java-app
-    group: apps
-    version: v1
-    resource: deployments
-  services:
-  - group: charts.helm.k8s.io
-    version: v1alpha1
-    kind: Cockroachdb
-    name: db-demo
-    id: db_1
-  mounthPath: '/bindings/accounts-db' # User configurable binding root
-```
-
-Here's how the mount paths would look like, where applicable:
-
-```
-bindings
-├── accounts-db
-│   ├── COCKROACHDB_CLUSTERIP
-│   ├── COCKROACHDB_CONF_PORT
-```
-
-Setting `spec.bindAsFiles` to `true` (default: `false`) enables injecting gathered bindings as files into the application/workload.
-
-For determining the folder where bindings should be injected, we can specify the destination using `spec.mountPath` or we can use `SERVICE_BINDING_ROOT` environment variable. If both are set then the `SERVICE_BINDING_ROOT` environment variable takes the higher precedence.
-
-The following table summarizes how the final bind path is computed:
-
-| spec.mountPath  | SERVICE_BINDING_ROOT | Final Bind Path                      |
-| --------------- | ---------------------| -------------------------------------|
-| nil             | non-existent         | /bindings/ServiceBinding_Name        |
-| nil             | /some/path/root      | /some/path/root/ServiceBinding_Name  |
-| /home/foo       | non-existent         | /home/foo                            |
-| /home/foo       | /some/path/root      | /some/path/root/ServiceBinding_Name  |
-
-## Custom naming strategy
-Binding names declared through annotations or CSV descriptors are processed before injected into the application according to the following strategy
- - names are upper-cased
- - service resource kind is upper-cased and prepended to the name
-
-example:
-```yaml
-DATABASE_HOST: example.com
-```
-`DATABASE` is backend service `Kind` and `HOST` is the binding name.
-
-With custom naming strategy/templates we can build custom binding names.
-
-Naming strategy defines a way to prepare binding names through
-ServiceBinding request.
-
-1. We have a nodejs application which connects to database.
-2. Application mostly requires host address and exposed port information.
-3. Application access this information through binding names.
-
-
-###How ?
-Following fields are part of `ServiceBinding` request.
-- Application
-```yaml
-  application:
-    name: nodejs-app
-    group: apps
-    version: v1
-    resource: deployments
-```
-
-- Backend/Database Service
-```yaml
-namingStrategy: 'POSTGRES_{{ .service.kind | upper }}_{{ .name | upper }}_ENV'
-services:
-  - group: postgresql.baiju.dev
-    version: v1alpha1
-    kind: Database
-    name: db-demo
-```
-
-Considering following are the fields exposed by above service to use for binding
-1. host
-2. port
-
-We have applied `POSTGRES_{{ .service.kind | upper }}_{{ .name | upper }}_ENV` naming strategy
-1. `.name` refers to the binding name specified in the crd annotation or descriptor.
-2. `.service` refer to the services in the `ServiceBinding` request.
-3. `upper` is the string function used to postprocess the string while compiling the template string.
-4. `POSTGRES` is the prefix used.
-5. `ENV` is the suffix used.
-
-Following would be list of binding names prepared by above `ServiceBinding`
-
-```yaml
-POSTGRES_DATABASE_HOST_ENV: example.com
-POSTGRES_DATABASE_PORT_ENV: 8080
-```
-
-We can define how that key should be prepared defining string template in `namingStrategy`
-
-#### Naming Strategies
-
-There are few naming strategies predefine.
-1. `none` - When this is applied, we get binding names in following form - `{{ .name }}`
-```yaml
-host: example.com
-port: 8080
-```
-
-
-2. `uppercase` - This is by uppercase set when no `namingStrategy` is defined and `bindAsFiles` set to false - `{{ .service.kind | upper}}_{{ .name | upper }}`
-
-```yaml
-DATABASE_HOST: example.com
-DATABASE_PORT: 8080
-```
-
-3. `lowercase` - This is by default set when `bindAsFiles` set to true -`{{ .name | lower }}`
-
-```yaml
-host: example.com
-port: 8080
-```
-
-#### Predefined string post processing functions
-1. `upper` - Capatalize all letters
-2. `lower` - Lowercase all letters
-3. `title` - Title case all letters.
-
-
-# Binding non-podSpec-based application workloads
-
-If your application is to be deployed as a non-podSPec-based workload such that the containers path should bind at a custom location, the `ServiceBinding` API provides an API to achieve that.
-
-
-``` yaml
-apiVersion: binding.operators.coreos.com/v1alpha1
-kind: ServiceBinding
-metadata:
-  name: binding-request
-  namespace: service-binding-demo
-spec:
-    application:
-        resourceRef: example-appconfig
-        group: stable.example.com
-        version: v1
-        resource: appconfigs
-        bindingPath:
-            secretPath: spec.secret # custom path to secret reference
-            containersPath: spec.containers # custom path to containers reference
-    ...
-    ...
-```
-
-A detailed documentation could be found [here](#Custom-Containers-Path-and-Secret-Path).
-
-# Custom Containers Path and Secret Path
-
-## Containers Path
-
-If your application is using a custom resource and containers path should bind
-at a custom location, SBO provides an API to achieve that.  Here is an example
-CR with containers in a custom location:
-
-```
-apiVersion: "stable.example.com/v1"
-kind: AppConfig
-metadata:
-    name: example-appconfig
-spec:
-    containers:
-    - name: hello-world
-      image: yusufkaratoprak/kubernetes-gosample:latest
-      ports:
-      - containerPort: 8090
-```
-
-In the above CR, the containers path is at `spec.containers`.  You can specify
-this path in the `ServiceBindingRequest` config at
-`spec.application.bindingPath.containersPath`:
-
-```
-apiVersion: apps.openshift.io/v1alpha1
-kind: ServiceBindingRequest
-metadata:
-    name: binding-request
-spec:
-    namePrefix: qiye111
-    application:
-        name: example-appconfig
-        group: stable.example.com
-        version: v1
-        resource: appconfigs
-        bindingPath:
-            containersPath: spec.containers
-    services:
-      - group: postgresql.baiju.dev
-        version: v1alpha1
-        kind: Database
-        name: example-db
-        id: zzz
-        namePrefix: qiye
-```
-
-After reconciliation, the `spec.containers` is going to be updated with
-`envFrom` and `secretRef` like this:
-
-```
-apiVersion: stable.example.com/v1
-kind: AppConfig
-metadata:
-    name: example-appconfig
-spec:
-  containers:
-  - env:
-    - name: ServiceBindingOperatorChangeTriggerEnvVar
-      value: "31793"
-    envFrom:
-    - secretRef:
-        name: binding-request
-    image: yusufkaratoprak/kubernetes-gosample:latest
-    name: hello-world
-    ports:
-    - containerPort: 8090
-    resources: {}
-```
-
-## Secret Path
-
-If your application is using a custom resource and secret path should bind at a
-custom location, SBO provides an API to achieve that.  Here is an example CR
-with secret in a custom location:
-
-```
-apiVersion: "stable.example.com/v1"
-kind: AppConfig
-metadata:
-    name: example-appconfig
-spec:
-    secret: some-value-72ddc0c540ab3a290e138726940591debf14c581
-```
-
-In the above CR, the secret path is at `spec.secret`.  You can specify
-this path in the `ServiceBindingRequest` config at
-`spec.application.bindingPath.secretPath`:
-
-
-```
-apiVersion: apps.openshift.io/v1alpha1
-kind: ServiceBindingRequest
-metadata:
-    name: binding-request
-spec:
-    namePrefix: qiye111
-    application:
-        name: example-appconfig
-        group: stable.example.com
-        version: v1
-        resource: appconfigs
-        bindingPath:
-            secretPath: spec.secret
-    services:
-      - group: postgresql.baiju.dev
-        version: v1alpha1
-        kind: Database
-        name: example-db
-        id: zzz
-        namePrefix: qiye
-```
-
-After reconciliation, the `spec.secret` is going to be updated with
-`binding-request` as the value:
-
-```
-apiVersion: "stable.example.com/v1"
-kind: AppConfig
-metadata:
-    name: example-appconfig
-spec:
-    secret: binding-request-72ddc0c540ab3a290e138726940591debf14c581
-```
-
-# Binding Metadata in Annotations
-
- During a binding operation, annotations from relevant Kubernetes resources are extracted to gather information about what is interesting for binding. This information is eventually used to bind the application with the backing service by populating the binding Secret.
-
-## Requirements for specifying binding information in a backing service CRD / Kubernetes resource
+#### Requirements for specifying binding information in a backing service CRD / Kubernetes resource
 
 1. Extract a string from the Kubernetes resource.
 2. Extract a string from the Kubernetes resource, and map it to custom name in the binding Secret.
@@ -589,11 +211,9 @@ spec:
 8. Extract a "slice of strings" from a Kubernetes resource and indicate the content in a specific index in the slice to be relevant for binding.
 
 
-## Data model : Building blocks for expressing binding information
-
-* `path`: A template representation of the path to the element in the Kubernetes resource. The value of `path` could be specified in either [JSONPath](https://kubernetes.io/docs/reference/kubectl/jsonpath/) or [GO templates](https://golang.org/pkg/text/template/)
-
-* `elementType`: Specifies if the value of the element referenced in `path` is of type `string` / `sliceOfStrings` / `sliceOfMaps` / `map`. Defaults to `string` if omitted.
+#### Data model : Building blocks for expressing binding information
+* `path`: A template representation of the path to the element in the Kubernetes resource. The value of path could be specified in either JSONPath or GO templates
+* `elementType`: Specifies if the value of the element referenced in `path` is of type `string` / `sliceOfStrings` / `sliceOfMaps`. Defaults to `string` if omitted.
 
 * `objectType`: Specifies if the value of the element indicated in `path` refers to a `ConfigMap`, `Secret` or a plain string in the current namespace!  Defaults to `Secret` if omitted and `elementType` is a non-`string`.
 
@@ -604,7 +224,7 @@ spec:
 * `sourceValue`: Specifies the key in the slice of maps whose value would be used as the value, corresponding to the value of the `sourceKey` which is added as the key, in the binding Secret. Mandatory only if `elementType` is `sliceOfMaps`.
 
 
-## A Sample CR : The Kubernetes resource that the application would bind to
+#### A Sample CR : The Kubernetes resource that the application would bind to
 
 ```
     apiVersion: apps.kube.io/v1beta1
@@ -627,9 +247,7 @@ spec:
         url: db.stage.ibm.com
 ```
 
-
-
-## Scenarios
+#### Scenarios
 
 
 1. ### Use everything from the Secret  “status.data.dbCredentials”
@@ -859,13 +477,346 @@ spec:
       x-descriptors:
         - service.binding:elementType=template:source={{GO TEMPLATE}}
     ```
+### Auto detect binding
 
-10. ### Use all the elements of Secret/ConfigMap
+The Service Binding Operator binds all information 'dependent' to the backing service CR by populating the binding secret with information from Routes, Services, ConfigMaps, and Secrets owned by the backing service CR if you express an intent to extract the same in case the backing service isn't annotated with the binding metadata.
 
-  Requirement: *Extract a “map” from the Kubernetes resource and generate multiple fields in the binding Secret.*
+[This](https://kubernetes.io/docs/concepts/workloads/controllers/garbage-collection/#owners-and-dependents) is how owner and dependent relationships are set in Kubernetes.
 
-  Annotation
+The binding is initiated by the setting this `detectBindingResources: true` in the `ServiceBinding` CR's `spec`.
 
-  ```
-    service.binding: path={.data},elementType=map
-  ```
+``` yaml
+apiVersion: binding.operators.coreos.com/v1alpha1
+kind: ServiceBinding
+metadata:
+  name: etcdbinding
+  namespace: service-binding-demo
+spec:
+  detectBindingResources: true
+  application:
+    name: java-app
+    group: apps
+    version: v1
+    resource: deployments
+  services:
+  - group: etcd.database.coreos.com
+    version: v1beta2
+    kind: EtcdCluster
+    name: etcd-cluster-example
+
+```
+
+When this API option is set to true, the Service Binding Operator automatically detects Routes, Services, ConfigMaps, and Secrets owned by the backing service CR and generates a binding secret out of it.
+
+
+### Custom Naming Strategy
+Binding names declared through annotations or CSV descriptors are processed before injected into the application according to the following strategy
+ - names are upper-cased
+ - service resource kind is upper-cased and prepended to the name
+
+example:
+```yaml
+DATABASE_HOST: example.com
+```
+`DATABASE` is backend service `Kind` and `HOST` is the binding name.
+
+With custom naming strategy/templates we can build custom binding names.
+
+Naming strategy defines a way to prepare binding names through
+ServiceBinding request.
+
+1. We have a nodejs application which connects to database.
+2. Application mostly requires host address and exposed port information.
+3. Application access this information through binding names.
+
+
+#### How ?
+Following fields are part of `ServiceBinding` request.
+- Application
+```yaml
+  application:
+    name: nodejs-app
+    group: apps
+    version: v1
+    resource: deployments
+```
+
+- Backend/Database Service
+```yaml
+namingStrategy: 'POSTGRES_{{ .service.kind | upper }}_{{ .name | upper }}_ENV'
+services:
+  - group: postgresql.baiju.dev
+    version: v1alpha1
+    kind: Database
+    name: db-demo
+```
+
+Considering following are the fields exposed by above service to use for binding
+1. host
+2. port
+
+We have applied `POSTGRES_{{ .service.kind | upper }}_{{ .name | upper }}_ENV` naming strategy
+1. `.name` refers to the binding name specified in the crd annotation or descriptor.
+2. `.service` refer to the services in the `ServiceBinding` request.
+3. `upper` is the string function used to postprocess the string while compiling the template string.
+4. `POSTGRES` is the prefix used.
+5. `ENV` is the suffix used.
+
+Following would be list of binding names prepared by above `ServiceBinding`
+
+```yaml
+POSTGRES_DATABASE_HOST_ENV: example.com
+POSTGRES_DATABASE_PORT_ENV: 8080
+```
+
+We can define how that key should be prepared defining string template in `namingStrategy`
+
+#### Naming Strategies
+
+There are few naming strategies predefine.
+1. `none` - When this is applied, we get binding names in following form - `{{ .name }}`
+```yaml
+host: example.com
+port: 8080
+```
+
+
+2. `uppercase` - This is by uppercase set when no `namingStrategy` is defined and `bindAsFiles` set to false - `{{ .service.kind | upper}}_{{ .name | upper }}`
+
+```yaml
+DATABASE_HOST: example.com
+DATABASE_PORT: 8080
+```
+
+3. `lowercase` - This is by default set when `bindAsFiles` set to true -`{{ .name | lower }}`
+
+```yaml
+host: example.com
+port: 8080
+```
+
+#### Predefined string post processing functions
+1. `upper` - Capatalize all letters
+2. `lower` - Lowercase all letters
+3. `title` - Title case all letters.
+
+
+### Compose custom binding variables
+
+
+If the backing service doesn't expose binding metadata or the values exposed are not easily consumable, then an application author may compose custom binding variables using attributes in the Kubernetes resource representing the backing service.
+
+
+#### Custom binding variables
+
+
+The *custom binding variables* feature enables application authors to request customized binding secrets using a combination of Go and jsonpath templating.
+
+Example, the backing service CR may expose the host, port and database user in separate variables, but the application may need to consume this information as a connection string.
+
+
+``` yaml
+apiVersion: binding.operators.coreos.com/v1alpha1
+kind: ServiceBinding
+metadata:
+  name: multi-service-binding
+  namespace: service-binding-demo
+spec:
+
+  application:
+    name: java-app
+    group: apps
+    version: v1
+    resource: deployments
+
+ services:
+  - group: postgresql.baiju.dev
+    version: v1alpha1
+    kind: Database
+    name: db-demo   <--- Database service
+    id: postgresDB <--- Optional "id" field
+  - group: ibmcloud.ibm.com
+    version: v1alpha1
+    kind: Binding
+    name: mytranslator-binding <--- Translation service
+    id: translationService
+
+  mappings:
+    ## From the database service
+    - name: JDBC_URL
+      value: 'jdbc:postgresql://{{ .postgresDB.status.dbConnectionIP }}:{{ .postgresDB.status.dbConnectionPort }}/{{ .postgresDB.status.dbName }}'
+    - name: DB_USER
+      value: '{{ .postgresDB.status.dbCredentials.user }}'
+
+    ## From the translator service
+    - name: LANGUAGE_TRANSLATOR_URL
+      value: '{{ index translationService.status.secretName "url" }}'
+    - name: LANGUAGE_TRANSLATOR_IAM_APIKEY
+      value: '{{ index translationService.status.secretName "apikey" }}'
+
+    ## From both the services!
+    - name: EXAMPLE_VARIABLE
+      value: '{{ .postgresDB.status.dbName }}{{ translationService.status.secretName}}'
+
+    ## Generate JSON.
+    - name: DB_JSON
+      value: {{ json .postgresDB.status }}
+
+```
+
+This has been adopted in [IBM CodeEngine](https://cloud.ibm.com/docs/codeengine?topic=codeengine-kn-service-binding).
+
+
+*In future releases, the above would be supported as volume mounts too.*
+
+### Custom Containers Path and Secret Path
+
+#### Containers Path
+
+If your application is using a custom resource and containers path should bind
+at a custom location, SBO provides an API to achieve that.  Here is an example
+CR with containers in a custom location:
+
+```
+apiVersion: "stable.example.com/v1"
+kind: AppConfig
+metadata:
+    name: example-appconfig
+spec:
+    containers:
+    - name: hello-world
+      image: yusufkaratoprak/kubernetes-gosample:latest
+      ports:
+      - containerPort: 8090
+```
+
+In the above CR, the containers path is at `spec.containers`.  You can specify
+this path in the `ServiceBindingRequest` config at
+`spec.application.bindingPath.containersPath`:
+
+```
+apiVersion: apps.openshift.io/v1alpha1
+kind: ServiceBindingRequest
+metadata:
+    name: binding-request
+spec:
+    namePrefix: qiye111
+    application:
+        name: example-appconfig
+        group: stable.example.com
+        version: v1
+        resource: appconfigs
+        bindingPath:
+            containersPath: spec.containers
+    services:
+      - group: postgresql.baiju.dev
+        version: v1alpha1
+        kind: Database
+        name: example-db
+        id: zzz
+        namePrefix: qiye
+```
+
+After reconciliation, the `spec.containers` is going to be updated with
+`envFrom` and `secretRef` like this:
+
+```
+apiVersion: stable.example.com/v1
+kind: AppConfig
+metadata:
+    name: example-appconfig
+spec:
+  containers:
+  - env:
+    - name: ServiceBindingOperatorChangeTriggerEnvVar
+      value: "31793"
+    envFrom:
+    - secretRef:
+        name: binding-request
+    image: yusufkaratoprak/kubernetes-gosample:latest
+    name: hello-world
+    ports:
+    - containerPort: 8090
+    resources: {}
+```
+
+#### Secret Path
+
+If your application is using a custom resource and secret path should bind at a
+custom location, SBO provides an API to achieve that.  Here is an example CR
+with secret in a custom location:
+
+```
+apiVersion: "stable.example.com/v1"
+kind: AppConfig
+metadata:
+    name: example-appconfig
+spec:
+    secret: some-value-72ddc0c540ab3a290e138726940591debf14c581
+```
+
+In the above CR, the secret path is at `spec.secret`.  You can specify
+this path in the `ServiceBindingRequest` config at
+`spec.application.bindingPath.secretPath`:
+
+
+```
+apiVersion: apps.openshift.io/v1alpha1
+kind: ServiceBindingRequest
+metadata:
+    name: binding-request
+spec:
+    namePrefix: qiye111
+    application:
+        name: example-appconfig
+        group: stable.example.com
+        version: v1
+        resource: appconfigs
+        bindingPath:
+            secretPath: spec.secret
+    services:
+      - group: postgresql.baiju.dev
+        version: v1alpha1
+        kind: Database
+        name: example-db
+        id: zzz
+        namePrefix: qiye
+```
+
+After reconciliation, the `spec.secret` is going to be updated with
+`binding-request` as the value:
+
+```
+apiVersion: "stable.example.com/v1"
+kind: AppConfig
+metadata:
+    name: example-appconfig
+spec:
+    secret: binding-request-72ddc0c540ab3a290e138726940591debf14c581
+```
+
+### Binding non-podSpec-based application workloads
+
+If your application is to be deployed as a non-podSPec-based workload such that the containers path should bind at a custom location, the `ServiceBinding` API provides an API to achieve that.
+
+
+``` yaml
+apiVersion: binding.operators.coreos.com/v1alpha1
+kind: ServiceBinding
+metadata:
+  name: binding-request
+  namespace: service-binding-demo
+spec:
+    application:
+        resourceRef: example-appconfig
+        group: stable.example.com
+        version: v1
+        resource: appconfigs
+        bindingPath:
+            secretPath: spec.secret # custom path to secret reference
+            containersPath: spec.containers # custom path to containers reference
+    ...
+    ...
+```
+
+A detailed documentation could be found [here](#Custom-Containers-Path-and-Secret-Path).
