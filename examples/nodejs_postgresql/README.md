@@ -138,6 +138,17 @@ spec:
     version: v1alpha1
     kind: Database
     name: db-demo
+  mappings:
+    - name: DATABASE_DBCONNECTIONIP
+      value: "{{ .postgresDB.status.dbConnectionIP }}"
+    - name: DATABASE_DBCONNECTIONPORT
+      value: "{{ .postgresDB.status.dbConnectionPort }}"
+    - name: DATABASE_SECRET_USER
+      value: "{{ .postgresDB.status.dbCredentials.user }}"
+    - name: DATABASE_SECRET_PASSWORD
+      value: "{{ .postgresDB.status.dbCredentials.password }}"
+    - name: DATABASE_DBNAME
+      value: "{{ .postgresDB.status.dbName }}"
 EOD
 ```
 
@@ -145,21 +156,46 @@ There are 2 parts in the request:
 
 * `application` - used to search for the application based on the name that we set earlier and the `group`, `version` and `resource` of the application to be a `Deployment`.
 * `services` - used to find the backing service - our operator-backed DB instance called `db-demo`.
+* `mappings` - used to inject the custom environment variables to application deployment, it's optional.
+
 
 That causes the application to be re-deployed.
 
 Once the new version is up, go to the application's route to check the UI. In the header you can see `(DB: db-demo)` which indicates that the application is connected to a DB and its name is `db-demo`. Now you can try the UI again but now it works!
 
-When the `ServiceBinding` was created the Service Binding Operator's controller injected the DB connection information into the application's `Deployment` as environment variables via an intermediate `Secret` called `binding-request`:
+When the `ServiceBinding` was created the Service Binding Operator's controller injected the DB connection information into the application's `Deployment` as environment variables via an intermediate `Secret` called `binding-request`， follows as example:
 
 ``` yaml
 spec:
   template:
     spec:
       containers:
-        - envFrom:
-          - secretRef:
-              name: binding-request
+      - env:
+        volumeMounts:
+        - mountPath: /bindings/binding-request
+          name: binding-request
+      - envFrom:
+        - secretRef:
+            name: binding-request-44ddf789
+      volumes:
+      - name: binding-request
+        secret:
+          defaultMode: 420
+          secretName: binding-request-44ddf789
+```
+
+The DB connection information is also mounted as files in application pod, follows as example:
+```shell
+oc exec -it nodejs-app-869bb569d-cvwqw bash
+bash-4.2$ cd bindings/binding-request
+bash-4.2$ ls
+db.host  db.name  db.password  db.port  db.user  dbConnectionIP  dbConnectionPort  dbName  image  imageName  password  user
+bash-4.2$ cat db.host; echo
+172.30.58.28
+bash-4.2$ cat db.user; echo
+postgres
+bash-4.2$ cat db.password; echo
+password
 ```
 
 #### Check the status of Service Binding
