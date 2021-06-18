@@ -128,6 +128,7 @@ metadata:
   name: binding-request
   namespace: service-binding-demo
 spec:
+  bindAsFiles: false
   application:
     name: nodejs-app
     group: apps
@@ -144,9 +145,11 @@ spec:
     - name: DATABASE_DBCONNECTIONPORT
       value: "{{ .postgresDB.status.dbConnectionPort }}"
     - name: DATABASE_SECRET_USER
-      value: "{{ .postgresDB.status.dbCredentials.user }}"
+#     value: "{{ .postgresDB.status.dbCredentials.user }}",
+      value: "postgres"
     - name: DATABASE_SECRET_PASSWORD
-      value: "{{ .postgresDB.status.dbCredentials.password }}"
+#     value: "{{ .postgresDB.status.dbCredentials.password }}"
+      value: "password"
     - name: DATABASE_DBNAME
       value: "{{ .postgresDB.status.dbName }}"
 EOD
@@ -165,6 +168,37 @@ Once the new version is up, go to the application's route to check the UI. In th
 
 When the `ServiceBinding` was created the Service Binding Operator's controller injected the DB connection information into the application's `Deployment` as environment variables via an intermediate `Secret` called `binding-request`， follows as example:
 
+
+##### If bindAsFiles: false, the envFrom section will be injected into application deployment
+``` yaml
+spec:
+  template:
+    spec:
+      containers:
+      - envFrom:
+        - secretRef:
+            name: binding-request-44ddf789
+```
+Check the DB connection information as environment variables in application pod:
+```console
+# env | grep DATA
+DATABASE_SECRET_USER=postgres
+DATABASE_SECRET_PASSWORD=password
+DATABASE_DBNAME=db-demo
+DATABASE_USER=postgres
+DATABASE_DB.USER=postgres
+DATABASE_DB.NAME=db-demo
+DATABASE_DB.PORT=5432
+DATABASE_DBCONNECTIONPORT=5432
+DATABASE_IMAGENAME=postgres
+DATABASE_DB.HOST=172.30.58.28
+DATABASE_PASSWORD=password
+DATABASE_DB.PASSWORD=password
+DATABASE_DBCONNECTIONIP=172.30.58.28
+DATABASE_IMAGE=docker.io/postgres
+```
+
+##### If bindAsFiles: true, the secret will be mounted as volume in application pod.
 ``` yaml
 spec:
   template:
@@ -174,21 +208,18 @@ spec:
         volumeMounts:
         - mountPath: /bindings/binding-request
           name: binding-request
-      - envFrom:
-        - secretRef:
-            name: binding-request-44ddf789
       volumes:
       - name: binding-request
         secret:
           defaultMode: 420
           secretName: binding-request-44ddf789
 ```
-
-The DB connection information is also mounted as files in application pod, follows as example:
+Check the DB connection information as files in application pod:
 ```shell
 oc exec -it nodejs-app-869bb569d-cvwqw bash
 bash-4.2$ cd bindings/binding-request
 bash-4.2$ ls
+DATABASE_DBCONNECTIONIP DATABASE_DBCONNECTIONPORT DATABASE_DBNAME  DATABASE_SECRET_PASSWORD DATABASE_SECRET_USER  
 db.host  db.name  db.password  db.port  db.user  dbConnectionIP  dbConnectionPort  dbName  image  imageName  password  user
 bash-4.2$ cat db.host; echo
 172.30.58.28
