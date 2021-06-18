@@ -198,7 +198,7 @@ DATABASE_DBCONNECTIONIP=172.30.58.28
 DATABASE_IMAGE=docker.io/postgres
 ```
 
-##### If bindAsFiles: true, the secret will be mounted as volume in application pod.
+##### If bindAsFiles: true, the volumeMount/volumes sections will be injected into application deployment
 ``` yaml
 spec:
   template:
