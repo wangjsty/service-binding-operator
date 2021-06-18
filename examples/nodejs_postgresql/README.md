@@ -214,6 +214,31 @@ spec:
           defaultMode: 420
           secretName: binding-request-44ddf789
 ```
+The secret mounted into application pod:
+``` yaml
+oc get secret binding-request-44ddf789 -o yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: binding-request-44ddf789
+  namespace: service-binding-demo
+data:
+  DATABASE_DB.HOST: MTcyLjMwLjEzMC4xNTM=
+  DATABASE_DB.NAME: ZGItZGVtbw==
+  DATABASE_DB.PASSWORD: cGFzc3dvcmQ=
+  DATABASE_DB.PORT: NTQzMg==
+  DATABASE_DB.USER: cG9zdGdyZXM=
+  DATABASE_DBCONNECTIONIP: MTcyLjMwLjEzMC4xNTM=
+  DATABASE_DBCONNECTIONPORT: NTQzMg==
+  DATABASE_DBNAME: ZGItZGVtbw==
+  DATABASE_IMAGE: ZG9ja2VyLmlvL3Bvc3RncmVz
+  DATABASE_IMAGENAME: cG9zdGdyZXM=
+  DATABASE_PASSWORD: cGFzc3dvcmQ=
+  DATABASE_SECRET_PASSWORD: cGFzc3dvcmQ=
+  DATABASE_SECRET_USER: cG9zdGdyZXM=
+  DATABASE_USER: cG9zdGdyZXM=
+type: Opaque
+```
 Check the DB connection information as files in application pod:
 ```shell
 oc exec -it nodejs-app-869bb569d-cvwqw bash
