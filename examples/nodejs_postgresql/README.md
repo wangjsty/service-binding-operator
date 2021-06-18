@@ -154,8 +154,8 @@ spec:
       value: "{{ .postgresDB.status.dbName }}"
 EOD
 ```
+Note: The issue https://github.com/redhat-developer/service-binding-operator/issues/982 is opened for tracking user and password problem.
 
-There are 2 parts in the request:
 
 * `application` - used to search for the application based on the name that we set earlier and the `group`, `version` and `resource` of the application to be a `Deployment`.
 * `services` - used to find the backing service - our operator-backed DB instance called `db-demo`.
@@ -221,8 +221,10 @@ bash-4.2$ cd bindings/binding-request
 bash-4.2$ ls
 DATABASE_DBCONNECTIONIP DATABASE_DBCONNECTIONPORT DATABASE_DBNAME  DATABASE_SECRET_PASSWORD DATABASE_SECRET_USER  
 db.host  db.name  db.password  db.port  db.user  dbConnectionIP  dbConnectionPort  dbName  image  imageName  password  user
-bash-4.2$ cat db.host; echo
+bash-4.2$ cat DATABASE_DBCONNECTIONIP; echo
 172.30.58.28
+bash-4.2$ cat DATABASE_DBCONNECTIONPORT; echo
+5432
 bash-4.2$ cat db.user; echo
 postgres
 bash-4.2$ cat db.password; echo
