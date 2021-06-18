@@ -154,7 +154,7 @@ spec:
       value: "{{ .postgresDB.status.dbName }}"
 EOD
 ```
-Note: The issue https://github.com/redhat-developer/service-binding-operator/issues/982 is opened for tracking user and password problem.
+Note: The issue https://github.com/redhat-developer/service-binding-operator/issues/982 is opened for tracking user and password evaluation problem.
 
 
 * `application` - used to search for the application based on the name that we set earlier and the `group`, `version` and `resource` of the application to be a `Deployment`.
